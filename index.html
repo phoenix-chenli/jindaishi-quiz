@@ -352,9 +352,11 @@ body {
         if (done) {
           if (letters[i] === q.a) cls += ' correct';
           else if (letters[i] === picked && !ok) cls += ' wrong';
-          else cls += ' dim';
+          else if (mode !== 'rev' && mode !== 'test') cls += ' dim';
         }
-        var act = done ? '' : (' data-qi="' + qi + '" data-l="' + letters[i] + '"');
+        // 错题模式和自测模式始终允许点击重做
+        var clickable = !done || mode === 'rev' || mode === 'test';
+        var act = clickable ? (' data-qi="' + qi + '" data-l="' + letters[i] + '"') : '';
         h += '<div class="' + cls + '"' + act + '>';
         h += '<span class="opt-letter">' + letters[i] + '</span>';
         h += q.o[i];
@@ -390,16 +392,15 @@ body {
   }
 
   // ===== ANSWER =====
-  optDiv.addEventListener('click', function(e) {
-    var btn = e.target.closest('.opt-btn');
-    if (!btn) return;
-    var qi = parseInt(btn.getAttribute('data-qi'));
-    var l = btn.getAttribute('data-l');
+  var answerLock = false; // 防止移动端 touch+click 双重触发
+  function handleAnswer(qi, l) {
+    if (answerLock) return;
     if (isNaN(qi) || !l) return;
     // 已答对的题不允许重复作答；错题模式允许重做错题
     if (answers[qi] === true) return;
     if (mode !== 'rev' && answers[qi] !== undefined) return;
 
+    answerLock = true;
     var q = ALL[qi];
     answers[qi] = (l === q.a);
     chosen[qi] = l;
@@ -418,7 +419,7 @@ body {
         if (answers[order[i]] === undefined) remaining++;
       }
       if (remaining === 0) {
-        // 所有题目答完，显示成绩单
+        answerLock = false;
         testTimer = setTimeout(function() { showTestResult(); }, 1200);
         return;
       }
@@ -433,6 +434,7 @@ body {
           showQ();
           buildGrid();
           updateStats();
+          answerLock = false;
           return;
         }
         if (pos >= order.length) pos = order.length - 1;
@@ -445,15 +447,39 @@ body {
         if (nextPos < order.length) {
           pos = nextPos;
         }
-        // 如果后面全部答完，停在当前位置（结果弹窗会由上面的 remaining 检查触发）
       } else {
         if (pos < order.length - 1) pos++;
       }
       showQ();
       buildGrid();
       updateStats();
+      answerLock = false;
       window.scrollTo({top: 0, behavior: 'smooth'});
     }, 800);
+  }
+
+  function getOptFromEvent(e) {
+    var btn = e.target.closest('.opt-btn');
+    if (!btn) return null;
+    return {
+      qi: parseInt(btn.getAttribute('data-qi')),
+      l: btn.getAttribute('data-l')
+    };
+  }
+
+  optDiv.addEventListener('click', function(e) {
+    var opt = getOptFromEvent(e);
+    if (!opt) return;
+    e.preventDefault();
+    handleAnswer(opt.qi, opt.l);
+  });
+
+  // 移动端 touch 事件兜底
+  optDiv.addEventListener('touchend', function(e) {
+    var opt = getOptFromEvent(e);
+    if (!opt) return;
+    e.preventDefault();
+    handleAnswer(opt.qi, opt.l);
   });
 
   // ===== NAVIGATION =====
