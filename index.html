@@ -396,7 +396,9 @@ body {
     var qi = parseInt(btn.getAttribute('data-qi'));
     var l = btn.getAttribute('data-l');
     if (isNaN(qi) || !l) return;
-    if (answers[qi] !== undefined) return;
+    // 已答对的题不允许重复作答；错题模式允许重做错题
+    if (answers[qi] === true) return;
+    if (mode !== 'rev' && answers[qi] !== undefined) return;
 
     var q = ALL[qi];
     answers[qi] = (l === q.a);
@@ -409,7 +411,7 @@ body {
     // 清除之前的自动跳转定时器
     if (testTimer) clearTimeout(testTimer);
 
-    // 自测模式：判断是否为最后一题
+    // 自测模式：判断是否全部答完
     if (testMode) {
       var remaining = 0;
       for (var i = 0; i < order.length; i++) {
@@ -425,7 +427,7 @@ body {
     // 自动跳转下一题（0.8秒延迟）
     testTimer = setTimeout(function() {
       if (mode === 'rev' && answers[qi] === true) {
-        // 错题模式答对：从 order 中移除
+        // 错题模式答对：从 order 中移除，自动消除
         order.splice(pos, 1);
         if (order.length === 0) {
           showQ();
