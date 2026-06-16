@@ -251,6 +251,7 @@ body {
 
   var TEST_SIZE = 50;
   var testMode = false;
+  var testAnswered = {};
   var testTimer = null;
 
   // ===== DOM REFS =====
@@ -289,6 +290,7 @@ body {
     if (testTimer) clearTimeout(testTimer);
     mode = m;
     testMode = (m === 'test');
+    testAnswered = {};
     var tabs = document.querySelectorAll('.tab');
     tabs.forEach(function(t) { t.classList.remove('active'); });
     if (m === 'seq') $('tabSeq').classList.add('active');
@@ -338,9 +340,17 @@ body {
 
       var qi = order[pos];
       var q = ALL[qi];
-      var done = (answers[qi] !== undefined);
-      var ok = answers[qi];
-      var picked = chosen[qi];
+      // 自测模式：完全隔离历史记录，只看本次自测答题状态
+      var done, ok, picked;
+      if (testMode) {
+        done = !!testAnswered[qi];
+        ok = done ? answers[qi] : undefined;
+        picked = done ? chosen[qi] : undefined;
+      } else {
+        done = (answers[qi] !== undefined);
+        ok = answers[qi];
+        picked = chosen[qi];
+      }
 
       qNum.textContent = '第 ' + (pos + 1) + ' 题';
       qText.textContent = q.q;
@@ -377,7 +387,20 @@ body {
       }
 
       prevBtn.disabled = (pos <= 0);
-      if (pos >= order.length - 1) {
+      // 自测模式：检查是否还有未答的题
+      if (testMode) {
+        var hasNext = false;
+        for (var i = pos + 1; i < order.length; i++) {
+          if (!testAnswered[order[i]]) { hasNext = true; break; }
+        }
+        if (!hasNext) {
+          nextBtn.textContent = '完成 ✓';
+          nextBtn.disabled = false;
+        } else {
+          nextBtn.textContent = '下一题 ›';
+          nextBtn.disabled = false;
+        }
+      } else if (pos >= order.length - 1) {
         nextBtn.textContent = '完成 ✓';
         nextBtn.disabled = true;
       } else {
@@ -398,13 +421,19 @@ body {
     var qi = parseInt(btn.getAttribute('data-qi'));
     var l = btn.getAttribute('data-l');
     if (isNaN(qi) || !l) return;
-    // 已答对的题不允许重复作答；错题模式允许重做错题
-    if (answers[qi] === true) return;
-    if (mode !== 'rev' && answers[qi] !== undefined) return;
+    // 自测模式：本次已答过的题不允许重做；历史记录不影响自测
+    if (testMode) {
+      if (testAnswered[qi]) return;
+    } else {
+      // 非自测：已答对的题不允许重复作答；错题模式允许重做
+      if (answers[qi] === true) return;
+      if (mode !== 'rev' && answers[qi] !== undefined) return;
+    }
 
     var q = ALL[qi];
     answers[qi] = (l === q.a);
     chosen[qi] = l;
+    if (testMode) testAnswered[qi] = true;
     saveState();
     updateStats();
 
@@ -429,11 +458,11 @@ body {
     showQ();
     buildGrid();
 
-    // 自测模式：判断是否全部答完
+    // 自测模式：判断是否全部答完（只看本次自测）
     if (testMode) {
       var remaining = 0;
       for (var i = 0; i < order.length; i++) {
-        if (answers[order[i]] === undefined) remaining++;
+        if (!testAnswered[order[i]]) remaining++;
       }
       if (remaining === 0) {
         testTimer = setTimeout(function() { showTestResult(); }, 1200);
@@ -441,11 +470,11 @@ body {
       }
     }
 
-    // 自动跳转下一题（0.8秒延迟）
+    // 自动跳转下一题（0.8秒延迟，自测模式跳过本次已答的题）
     testTimer = setTimeout(function() {
       if (testMode) {
         var nextPos = pos + 1;
-        while (nextPos < order.length && answers[order[nextPos]] !== undefined) {
+        while (nextPos < order.length && testAnswered[order[nextPos]]) {
           nextPos++;
         }
         if (nextPos < order.length) pos = nextPos;
@@ -464,6 +493,13 @@ body {
     if (testTimer) clearTimeout(testTimer);
     var np = pos + dir;
     if (np < 0 || np >= order.length) return;
+    // 自测模式：跳过已答过的题
+    if (testMode) {
+      while (np >= 0 && np < order.length && testAnswered[order[np]]) {
+        np += dir;
+      }
+      if (np < 0 || np >= order.length) return;
+    }
     pos = np;
     showQ();
     window.scrollTo({top: 0, behavior: 'smooth'});
@@ -487,8 +523,11 @@ body {
       var qi = order[i];
       var cls = 'gn';
       if (i === pos) cls += ' cur';
-      else if (answers[qi] === true) cls += ' ok';
-      else if (answers[qi] === false) cls += ' bad';
+      // 自测模式：未在本次自测答过的题，不显示历史对错
+      else if (!testMode || testAnswered[qi]) {
+        if (answers[qi] === true) cls += ' ok';
+        else if (answers[qi] === false) cls += ' bad';
+      }
       h += '<div class="' + cls + '" data-p="' + i + '">' + (i + 1) + '</div>';
     }
     gridEl.innerHTML = h;
@@ -502,8 +541,11 @@ body {
       if (p === pos) c.classList.add('cur');
       var qi = order[p];
       c.classList.remove('ok', 'bad');
-      if (answers[qi] === true) c.classList.add('ok');
-      else if (answers[qi] === false) c.classList.add('bad');
+      // 自测模式：未在本次自测答过的题，不显示历史对错
+      if (!testMode || testAnswered[qi]) {
+        if (answers[qi] === true) c.classList.add('ok');
+        else if (answers[qi] === false) c.classList.add('bad');
+      }
     });
   }
 
@@ -544,14 +586,18 @@ body {
     cntBad.textContent = bad;
     accEl.textContent = total > 0 ? (ok / total * 100).toFixed(1) + '%' : '--';
 
-    // 自测模式：更新得分
+    // 自测模式：更新得分（仅统计本次自测答过的题）
     if (testMode) {
       testScoreEl.style.display = '';
-      var testOk = 0;
+      var testOk = 0, testDone = 0;
       for (var i = 0; i < order.length; i++) {
-        if (answers[order[i]] === true) testOk++;
+        var qi = order[i];
+        if (testAnswered[qi]) {
+          testDone++;
+          if (answers[qi] === true) testOk++;
+        }
       }
-      testScoreEl.innerHTML = '得分: <b>' + (testOk * 2) + '</b>/100';
+      testScoreEl.innerHTML = '得分: <b>' + (testOk * 2) + '</b>/100  (' + testDone + '/' + TEST_SIZE + ')';
     } else {
       testScoreEl.style.display = 'none';
     }
@@ -560,7 +606,16 @@ body {
   // ===== PERSIST =====
   function saveState() {
     try {
-      localStorage.setItem('quiz_njd', JSON.stringify({a: answers, c: chosen}));
+      var data = {a: answers, c: chosen};
+      // 自测模式：保存测试状态，防止页面重载丢失进度
+      if (testMode) {
+        data.tm = true;
+        data.to = testAnswered;
+        data.mo = mode;
+        data.ord = order;
+        data.ps = pos;
+      }
+      localStorage.setItem('quiz_njd', JSON.stringify(data));
     } catch(e) {}
   }
 
@@ -571,6 +626,14 @@ body {
         var s = JSON.parse(raw);
         if (s.a) answers = s.a;
         if (s.c) chosen = s.c;
+        // 恢复自测状态（防止手机页面重载丢失进度）
+        if (s.tm) {
+          testMode = true;
+          testAnswered = s.to || {};
+          mode = s.mo || 'test';
+          order = s.ord || [];
+          pos = s.ps || 0;
+        }
       }
     } catch(e) {}
   }
@@ -594,6 +657,9 @@ body {
         chosen[qi] = '';
       }
     }
+    // 清除自测状态（已完成），防止页面重载恢复已完成的自测
+    testMode = false;
+    testAnswered = {};
     saveState();
 
     var score = testOk * 2;
@@ -631,7 +697,15 @@ body {
   // ===== INIT =====
   try {
     loadState();
-    buildOrder(false);
+    // 如果恢复自测模式，保持已有order；否则初始化顺序模式
+    if (!testMode) {
+      buildOrder(false);
+    } else {
+      // 恢复自测UI状态
+      document.getElementById("tabSeq").classList.remove("active");
+      document.getElementById("tabTest").classList.add("active");
+      testScoreEl.style.display = "";
+    }
     updateStats();
     showQ();
     buildGrid();
